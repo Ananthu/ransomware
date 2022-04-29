@@ -1,4 +1,4 @@
-colored
+pyAesCrypt
+M2Crypto
+flask
 getmac
-pycryptodomex
-pycryptodome
